@@ -19,7 +19,7 @@ It uses [kv-sh](https://github.com/imyller/kv-sh) key-value database for configu
  - Unix-like environment
  - [kv-sh](https://github.com/imyller/kv-sh) key-value database library
  - [GNU Tar](https://www.gnu.org/software/tar/)
- - [curl](https://curl.haxx.se)
+ - [gzip](http://www.gzip.org)
 
 ## License
 
