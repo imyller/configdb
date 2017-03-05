@@ -18,6 +18,8 @@ It uses [kv-sh](https://github.com/imyller/kv-sh) key-value database for configu
  - Standard POSIX shell (sh)
  - Unix-like environment
  - [kv-sh](https://github.com/imyller/kv-sh) key-value database library
+ - [GNU Tar](https://www.gnu.org/software/tar/)
+ - [curl](https://curl.haxx.se)
 
 ## License
 
