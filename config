@@ -1,0 +1,403 @@
+#!/bin/sh
+
+############
+# ConfigDB #
+############
+#
+#
+# Initialize
+#
+
+# Configuration
+
+CONFIGDB_CONF="/etc/configdb/configdb.conf"
+CONFIGDB_CONFD="/etc/configdb/conf.d"
+
+# Mode
+
+if [ -z "${CONFIGDB_MODE}" ]; then
+	CONFIGDB_MODE=""
+fi
+
+export CONFIGDB_MODE
+
+# Safe defaults
+
+CONFIG_DIR="/etc/configdb/system"
+SAFE_MODE_CONFIG_DIR="/tmp/.safe_mode_config"
+FACTORY_CONFIG_DIR="/etc/configdb/factory"
+[ -z "${SAFE_MODE}" ] && SAFE_MODE="no"
+HOOKD_DIR="/etc/configdb/hook.d"
+
+# Read .conf and conf.d
+
+if [ ! -f "${CONFIGDB_CONF}" ]; then
+        >&2 echo "error: ${CONFIGDB_CONF} missing"
+        exit 1
+else
+	. "${CONFIGDB_CONF}"
+	if [ -d "${CONFIGDB_CONFD}" ]; then
+		for f in $(ls -d "${CONFIGDB_CONFD}/"*.conf 2> /dev/null); do
+        		. "${f}"
+		done
+	fi
+fi
+
+# Verify config
+
+if [ -z "${CONFIG_DIR}" ]; then
+	>&2 echo "error: CONFIG_DIR not defined"
+	exit 1
+fi
+
+# Make sure config directory exists
+
+[ ! -d "${CONFIG_DIR}" ] && mkdir "${CONFIG_DIR}" 2> /dev/null
+
+# Skip factory config if dir does not exist
+
+[ ! -d "${FACTORY_CONFIG_DIR}" ] && unset FACTORY_CONFIG_DIR
+
+# Safe mode
+
+if [ "${SAFE_MODE}" = "yes" ]; then
+        if [ ! -d "${SAFE_MODE_CONFIG_DIR}" ]; then
+                mkdir "${SAFE_MODE_CONFIG_DIR}" 2> /dev/null
+		if [ ! -z "${FACTORY_CONFIG_DIR}" ] && [ -d "${FACTORY_CONFIG_DIR}" ]; then
+                	cp -r "${FACTORY_CONFIG_DIR}"/* "${SAFE_MODE_CONFIG_DIR}"/ 2> /dev/null
+		fi
+	fi
+	CONFIG_DIR="${SAFE_MODE_CONFIG_DIR}"
+fi
+
+# Load kv-sh engine
+
+if [ ! -x "/usr/lib/kv-sh" ]; then
+	>&2 echo "error: kv-sh is not installed"
+	exit 1
+fi
+
+DB_DEFAULTS_DIR="${FACTORY_CONFIG_DIR}" DB_DIR="${CONFIG_DIR}" . /usr/lib/kv-sh
+
+#
+# Functions
+#
+
+usage() {
+
+	echo "Usage: $0 <command> [<options>]"
+	echo
+	echo "Commands:"
+	echo " help"
+	echo " get <key> [<fallback value>]"
+	echo " set <key> <value>"
+	echo " del <key>"
+	echo " exists <key>"
+	echo " list [<key prefix>]"
+	echo " keys [<key prefix>]"
+	echo " reset [<key prefix>]"
+	echo " dump [<file>]"
+        echo " restore [<file>]"
+        echo " import [<file>]"
+	echo " zdump [<file>]"
+	echo " zrestore [<file>]"
+	echo " zimport [<file>]"
+	echo " update [<key prefix>]"
+	echo " sync"
+	echo
+}
+
+callback_match() {
+	local key="${1}"
+	local cbpath="${2}"
+	case "${key}" in
+    		\${cbpath}*) return 0 ;;
+    		*) return 1 ;;
+	esac
+}
+
+run_callback() {
+	local script="${1}"
+	shift
+	if [ -f "${script}" ] && [ -x "${script}" ]; then
+        	${script} ${@} > /dev/null || true
+        fi
+}
+
+run_callback_dir() {
+	local cbpath="${1}"
+	shift
+	if [ -d "${cbpath}" ]; then
+		for script in $(ls -A "${cbpath}"/ 2> /dev/null); do
+			run_callback "${cbpath}/${script}" ${@}
+		done
+	fi
+}
+
+run_wildcard_callbacks() {
+	local cbpath="${1}"
+	local cmd="${2}"
+	local key="${3}"
+	local value="${4}"
+	local fb
+	shift ; shift ; shift ; shift
+	if [ -d "${cbpath}" ]; then
+		for f in $(ls -A -d "${cbpath}"/*% 2> /dev/null); do
+			fb=$(basename "${f}" | cut -d% -f1)
+			case "${key}" in
+				${fb}*)
+					if [ -d "${f}" ]; then
+						run_callback_dir "${f}" "${cmd}" "${key}" "${value}" ${@}
+					elif [ -f "${f}" ]; then
+						run_callback "${f}" "${cmd}" "${key}" "${value}" ${@}
+					fi
+					;;
+				*)
+					;;
+			esac
+		done
+	fi
+}
+
+callback() {
+	if [ ! -d "${HOOKD_DIR}" ]; then
+		return 0
+	fi
+	if [ ! -z "${NO_HOOKS}" ]; then
+		return 0
+	fi
+	local cmd="${1}"
+	shift
+	case "${cmd}" in
+	  get|"set"|update|del)
+		local key="${1}"
+	        local value="${2}"
+        	shift ; shift
+		run_wildcard_callbacks "${HOOKD_DIR}/${cmd}" "${cmd}" "${key}" "${value}" ${@}
+	 	run_callback_dir "${HOOKD_DIR}/${cmd}/${key}" "${cmd}" "${key}" "${value}" ${@}
+		run_callback "${HOOKD_DIR}/${cmd}/${key}" "${cmd}" "${key}" "${value}" ${@}
+		run_callback_dir "${HOOKD_DIR}/${cmd}" "${cmd}" "${key}" "${value}" ${@}
+		run_callback_dir "${HOOKD_DIR}" "${cmd}" "${key}" "${value}" ${@}
+		return 0
+		;;
+	   dump|import|restore|reset|sync)
+		run_callback_dir "${HOOKD_DIR}/${cmd}" "${cmd}" ${@}
+                run_callback_dir "${HOOKD_DIR}" "${cmd}" ${@}
+		return 0
+		;;
+	  *)
+		>&2 echo "unsupported callback: ${cmd} ${@}"
+		exit 1
+	esac
+}
+
+config_get() {
+	local key="${1}"
+	if [ -z "${key}" ]; then
+                return 1
+        fi
+	local fallback="${2}"
+	local value
+	if (! kvexists "${key}" 2> /dev/null); then
+		value="${fallback}"
+	else
+		value=$(kvget "${key}" 2> /dev/null)
+		if [ $? != 0 ]; then
+			value="${fallback}"
+		fi
+	fi
+	echo "${value}"
+	callback get "${key}" "${value}"
+}
+
+config_set() {
+	local key="${1}"
+	if [ -z "${key}" ]; then
+                return 1
+        fi
+  	local value="${2}"
+	local oldvalue="$(kvget "${key}")"
+        if kvset "${key}" "${value}"; then
+		callback set "${key}" "${value}"
+		if [ "${oldvalue}" != "${value}" ]; then
+			callback update "${key}" "${value}"
+		fi
+	fi
+}
+
+config_del() {
+	local key="${1}"
+	if [ -z "${key}" ]; then
+                return 1
+        fi
+	local oldvalue="$(kvget "${key}")"
+	if kvdel "${key}"; then
+		local value="$(kvget "${key}")"
+		callback del "${key}" "${value}"
+		if [ "${oldvalue}" != "${value}" ]; then
+	   		callback update "${key}" "${value}"
+		fi
+	fi
+}
+
+config_exists() {
+	local key="${1}"
+	kvexists "${key}"
+}
+
+config_keys() {
+	local prefix="${1}" ; shift
+        local keys="$(kvkeys $@)"
+        for key in $keys; do
+                if [ -z "${prefix}" ]; then
+                        echo "${key}"
+                else
+                        case "${key}" in
+                                ${prefix}|${prefix}*)
+                                        echo "${key}"
+                                        ;;
+                                *)
+                                        ;;
+                        esac
+                fi
+        done
+}
+
+config_list() {
+        local prefix="${1}"
+        local keys="$(config_keys "${prefix}")"
+        local value
+        for key in $keys; do
+                value="$(kvget "${key}")"
+                echo "${key} ${value}"
+        done
+}
+
+config_reset() {
+	local prefix="${1}"
+        local keys="$(config_keys "${prefix}" -l)"
+        for key in $keys; do
+		config_del "${key}"
+        done
+	if [ -z "${prefix}" ]; then
+		kvclear
+		[ ! -d "${CONFIG_DIR}" ] && mkdir "${CONFIG_DIR}" 2> /dev/null
+		callback reset
+	fi
+}
+
+config_update() {
+	local prefix="${1}"
+	local keys="$(config_keys "${prefix}")"
+	local value
+        for key in $keys; do
+		value="$(kvget "${key}")"
+		callback update "${key}" "${value}"
+        done
+}
+
+config_sync() {
+	config_update
+        callback sync
+}
+
+config_dump() {
+        local file="${1}"
+        local mode="${2}"
+        _dump() {
+                if [ "${mode}" = "z" ]; then
+                        kvdump -l | gzip -9 -f
+                else
+                        kvdump -l
+                fi
+        }
+        if [ -z "${file}" ]; then
+                _dump
+        else
+            	_dump > "${file}"
+        fi
+        callback dump
+}
+
+config_import() {
+	local file="${1}"
+	local mode="${2}"
+        _import() {
+		if [ "${mode}" = "z" ]; then
+                	gzip -d | kvimport
+		else
+			kvimport
+		fi
+        }
+        if [ -z "${file}" ]; then
+                _import
+        else
+                _import < "${file}"
+        fi
+	config_sync
+	callback import
+}
+
+config_restore() {
+	kvclear
+	config_import "${1}" "${2}"
+	callback restore
+}
+
+
+COMMAND="$1"
+shift
+
+case "$COMMAND" in
+    help|-h|--help|--h|-?|--?)
+	usage
+	;;
+    get)
+	config_get "${1}" "${2}"
+        ;;
+    "set")
+	config_set "${1}" "${2}"
+        ;;
+    del)
+	config_del "${1}"
+	;;
+    exists)
+	config_exists "${1}"
+	;;
+    list)
+	config_list "${1}"
+	;;
+    keys)
+	config_keys "${1}"
+        ;;
+    reset)
+	config_reset "${1}"
+	;;
+    dump)
+	config_dump "${1}"
+	;;
+    restore)
+	config_restore "${1}"
+	;;
+    import)
+	config_import "${1}"
+	;;
+    zdump)
+        config_dump "${1}" z
+        ;;
+    zrestore)
+        config_restore "${1}" z
+        ;;
+    zimport)
+        config_import "${1}" z
+        ;;
+    update)
+        config_update "${1}"
+	;;
+    sync)
+	config_sync
+	;;
+    *)
+        usage
+        exit 1
+esac

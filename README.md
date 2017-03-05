@@ -1,0 +1,23 @@
+configdb 
+========
+
+configdb is a configuration management system written in standard POSIX shell (sh).
+It uses `kv-sh` key-value database for configuration storage.
+
+## About
+ - Compact configuration management system
+ - Key-value based 
+ - Highly configurable (`/etc/configdb/`)
+ - Supports event hook scripts for system bindings 
+ - Supports dump/restore
+ - Designed for embedded environments
+
+## Requirements
+
+ - Standard POSIX shell (sh)
+ - Unix-like environment
+ - `kv-sh` key-value database library
+
+## License
+
+ * MIT
