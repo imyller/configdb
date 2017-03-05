@@ -1,8 +1,9 @@
-configdb 
+ConfigDB 
 ========
 
-configdb is a configuration management system written in standard POSIX shell (sh).
-It uses `kv-sh` key-value database for configuration storage.
+ConfigDB is a configuration management system written in standard POSIX shell (sh).
+
+It uses [kv-sh](https://github.com/imyller/kv-sh) key-value database for configuration storage.
 
 ## About
  - Compact configuration management system
@@ -16,7 +17,7 @@ It uses `kv-sh` key-value database for configuration storage.
 
  - Standard POSIX shell (sh)
  - Unix-like environment
- - `kv-sh` key-value database library
+ - [kv-sh](https://github.com/imyller/kv-sh) key-value database library
 
 ## License
 
