@@ -70,14 +70,18 @@ if [ "${SAFE_MODE}" = "yes" ]; then
 	CONFIG_DIR="${SAFE_MODE_CONFIG_DIR}"
 fi
 
-# Load kv-sh engine
+# Load kv-sh database library
 
-if [ ! -x "/usr/lib/kv-sh" ]; then
-	>&2 echo "error: kv-sh is not installed"
-	exit 1
+KVSH_LIB="/usr/lib/kv-sh"
+if [ ! -x "${KVSH_LIB}" ]; then
+	KVSH_LIB="/usr/local/lib/kv-sh"
+	if [ ! -x "${KVSH_LIB}" ]; then
+		>&2 echo "error: kv-sh is not installed"
+		exit 1
+	fi
 fi
 
-DB_DEFAULTS_DIR="${FACTORY_CONFIG_DIR}" DB_DIR="${CONFIG_DIR}" . /usr/lib/kv-sh
+DB_DEFAULTS_DIR="${FACTORY_CONFIG_DIR}" DB_DIR="${CONFIG_DIR}" . "${KVSH_LIB}"
 
 #
 # Functions
